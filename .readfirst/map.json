@@ -1,0 +1,1231 @@
+{
+  "format": "readfirst/map@1",
+  "groups": [
+    {
+      "id": "apps-cli",
+      "title": "The kairos command-line tool (login, profiles, data, cases, models, workflows, import, run); private, runs through tsx.",
+      "files": [
+        "apps/cli/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/cli run typecheck",
+          "why": "types of the CLI"
+        },
+        {
+          "run": "pnpm exec vitest run apps/cli/test",
+          "why": "CLI, import and models tests"
+        }
+      ],
+      "risks": [
+        {
+          "text": "Credentials (API key, session) are stored in plaintext in ~/.kairos/config.json (or KAIROS_CONFIG), mode 0600 in a 0700 directory; keep those modes.",
+          "files": [
+            "apps/cli/src/config.ts"
+          ]
+        },
+        {
+          "text": "Precedence is flag, then environment, then profile: KAIROS_API_KEY set in the shell overrides the profile's session login, so commands that need a signed-in person fail or hit another environment.",
+          "files": [
+            "apps/cli/src/config.ts"
+          ]
+        },
+        {
+          "text": "kairos profiles remove deletes the profile and its keys without confirmation, and import overwrites <file>.rejects.jsonl next to the input.",
+          "files": [
+            "apps/cli/src/commands/auth.ts",
+            "apps/cli/src/commands/import.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apps-console",
+      "title": "The React + Vite operator console (decisions, entities, workflows, rulesets, lists, cases, settings), plus the plugin that builds the public /docs from the repository's docs/ folder.",
+      "files": [
+        "apps/console/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/console run typecheck",
+          "why": "types of the console"
+        },
+        {
+          "run": "pnpm build:standalone",
+          "why": "console and server build; the docs plugin warns about customer pages that break the docs rules"
+        },
+        {
+          "run": "pnpm test",
+          "why": "every vitest suite: core, server (starts a throwaway Postgres), CLI, console, SDK, edge"
+        }
+      ],
+      "risks": [
+        {
+          "text": "The API client types are written by hand with no shared schema: lists.readers expects {rulesets, workflows} from /v1/lists/:ref/readers, and ListPage falls back to [] so a server shape change compiles but silently shows an empty \"Used by\" card. The delete-blocked text comes from the server error; only the confirm text in ListPage names rulesets alone. (history 544cb7e)",
+          "files": [
+            "apps/console/src/api/rulesets.ts",
+            "apps/console/src/pages/settings/lists/ListPage.tsx"
+          ]
+        },
+        {
+          "text": "Every request carries X-Kairos-Workspace and X-Kairos-Environment from module-level values; a call before setWorkspace/setEnvironment runs in the default scope. In dev the vite proxy lists the server prefixes (v1, auth, app, mcp): a new top-level server route needs an entry there.",
+          "files": [
+            "apps/console/src/api/client.ts",
+            "apps/console/vite.config.ts"
+          ]
+        },
+        {
+          "text": "Only pages listed in docs/pages.ts are published, in array order; a new .md in docs/ that is not listed is silently unpublished.",
+          "files": [
+            "apps/console/docs/pages.ts",
+            "apps/console/docs/plugin.ts"
+          ]
+        },
+        {
+          "text": "main.tsx runs the app in StrictMode, so mount effects run twice in dev; an effect that sends a write on mount would send it twice. Reviewed effects only GET (TwoFactor.tsx); about 137 useEffect calls exist and most were not audited. No import.meta.env is used except VITE_KAIROS_DOCS_URL and VITE_KAIROS_SHOW_GET_STARTED, which ship to the browser, so never put a secret in a VITE_ variable.",
+          "files": [
+            "apps/console/src/main.tsx",
+            "apps/console/src/layouts/DashboardLayout.tsx"
+          ]
+        },
+        {
+          "text": "The server serves the built console only when KAIROS_CONSOLE is set, so the console must be built before the server build (build:standalone does both in order).",
+          "files": [
+            "apps/server/src/index.ts",
+            "apps/server/src/platform/config.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apps-server",
+      "title": "Hono + Drizzle/Postgres API server and background worker: events, entities, decisions, workflows, rulesets, lists, cases, webhooks, sign-in and API keys.",
+      "files": [
+        "apps/server/src/**",
+        "apps/server/test/**",
+        "apps/server/scripts/**",
+        "apps/server/package.json",
+        "apps/server/tsconfig.json"
+      ],
+      "checks": [
+        {
+          "run": "pnpm exec vitest run apps/server/test/structure.test.ts",
+          "why": "module layout, libs/ indexes, call direction and where SQL may run"
+        },
+        {
+          "run": "pnpm --filter @kairos/server run typecheck",
+          "why": "types of the server"
+        },
+        {
+          "run": "pnpm exec vitest run apps/server/test/workflow-lists.test.ts apps/server/test/workflow-rulesets.test.ts",
+          "why": "lists in workflows and missing ruleset inputs"
+        },
+        {
+          "run": "pnpm test",
+          "why": "every vitest suite: core, server (starts a throwaway Postgres), CLI, console, SDK, edge"
+        }
+      ],
+      "risks": [
+        {
+          "text": "Deleting a list is refused only for readers that listsOfWorkflow and rulesetListSlugs can find: a string with a literal inList(value, 'slug'), or a node with type \"list.*\" and a string `list`. A new step type, a computed slug or a new kind of reader is missed, the delete succeeds and that reader breaks. (history 544cb7e)",
+          "files": [
+            "apps/server/src/modules/lists/service.ts",
+            "packages/core/src/rulesets.ts"
+          ]
+        },
+        {
+          "text": "A ruleset step resolves each input on its own and swallows only the ExpressionError that starts with \"field not found: \" (NOT_THERE), so an absent field becomes a missing input and fails only when the ruleset requires it. Changing that message, the regex or resolving the whole mapping at once makes absent fields fail the step. (history 544cb7e)",
+          "files": [
+            "apps/server/src/modules/workflows/libs/steps.ts",
+            "apps/server/test/workflow-rulesets.test.ts"
+          ]
+        },
+        {
+          "text": "A module root may hold only index, route, service, repo, types and schema; every other file lives in libs/ behind libs/index.ts, and code outside imports <module>/libs, never a file in it. A file added at the root, or an import into libs/commands.ts directly, fails structure.test and the production Test stage. (history 4c4eaab)",
+          "files": [
+            "apps/server/src/modules/catalog/libs/index.ts",
+            "apps/server/src/modules/catalog/route.ts",
+            "apps/server/test/structure.test.ts"
+          ]
+        },
+        {
+          "text": "Raw SQL through rows()/first() gets Postgres bigint and count(*) back as strings (node-postgres); cast counts ::int in the query or wrap in Number(), as catalog/repo.ts does. The seq columns are bigint mode number, safe only below 2^53.",
+          "files": [
+            "apps/server/src/platform/sql.ts",
+            "apps/server/src/modules/catalog/repo.ts"
+          ]
+        },
+        {
+          "text": "Every outbound HTTP call (webhooks, the workflow http step, case media download) must go through guardedLookup/urlProblem, which refuse private addresses at connect time; a new fetch path that skips them opens SSRF to internal hosts.",
+          "files": [
+            "apps/server/src/modules/webhooks/libs/send.ts",
+            "apps/server/src/modules/workflows/libs/steps.ts",
+            "apps/server/src/modules/cases/libs/media.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude",
+      "title": "Claude Code project settings: strips agent attribution from commits and PRs.",
+      "files": [
+        ".claude/**"
+      ],
+      "checks": [],
+      "risks": [
+        {
+          "text": "Keep includeCoAuthoredBy false and empty attribution: AGENTS.md forbids Co-Authored-By or generated-by lines in commits and PRs.",
+          "files": [
+            ".claude/settings.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "docs",
+      "title": "The documentation, published at /docs by the console build and read by customers, operators (deployment/) and contributors (development/, not published).",
+      "files": [
+        "docs/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/console run build",
+          "why": "the docs build warns about customer pages that name server settings, broken links and images"
+        },
+        {
+          "run": "pnpm exec vitest run packages/core/test",
+          "why": "fails when docs/templates/events pages differ from templates/events"
+        }
+      ],
+      "risks": [
+        {
+          "text": "Customer pages must not name pnpm, localhost, repository paths or server settings (KAIROS_*, SUPABASE_*, DATABASE_URL); those go in docs/deployment/. The docs build warns, it does not fail.",
+          "files": [
+            "docs/**"
+          ]
+        },
+        {
+          "text": "docs/templates/events/*.md are generated from templates/events/*.json; edit the JSON and run pnpm docs:events, not the page.",
+          "files": [
+            "docs/templates/events/**"
+          ]
+        },
+        {
+          "text": "A new page is published only when listed in apps/console/docs/pages.ts.",
+          "files": [
+            "docs/README.md"
+          ]
+        },
+        {
+          "text": "Run-time numbers in the notes (14 of 100 decisions, the baseline table) come from packages/eval; update docs/development/evaluation.md when eval:accept changes the baseline.",
+          "files": [
+            "docs/development/evaluation.md"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "examples",
+      "title": "End-to-end scenarios run with pnpm example:* against a local server.",
+      "files": [
+        "examples/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm run typecheck",
+          "why": "types of the examples"
+        }
+      ],
+      "risks": [
+        {
+          "text": "Examples need KAIROS_API_KEY (a ksk_ secret key from the console) in .env and a running server with GRAYSON_API_KEY; they send real events and decisions to whatever KAIROS_URL points at.",
+          "files": [
+            "examples/bank-transfer.ts"
+          ]
+        },
+        {
+          "text": "They load action definitions from templates/, so editing a template changes what every example sends.",
+          "files": [
+            "examples/**"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-core",
+      "title": "The decision library: builds the context, asks the model (Grayson), then applies policy, rulesets, totals and scoring. Server, CLI and console import it as @kairos/core.",
+      "files": [
+        "packages/core/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/core run typecheck",
+          "why": "types of core"
+        },
+        {
+          "run": "pnpm exec vitest run packages/core/test",
+          "why": "core tests, incl. action templates and that docs/templates/events match templates/"
+        },
+        {
+          "run": "pnpm eval",
+          "why": "catch rate and false-action rate against the accepted baseline"
+        }
+      ],
+      "risks": [
+        {
+          "text": "Key order of the context is part of the model input: buildContext fixes the top-level order and baseline.ts sorts keys. Reordering or sorting changes answers (14 of 100 decisions with sorted keys vs 2 for a repeat of the same request).",
+          "files": [
+            "packages/core/src/context.ts",
+            "packages/core/src/baseline.ts"
+          ]
+        },
+        {
+          "text": "decide throws when the model gives no hold answer, and a reason counts only at probability >= action.context.reasonThreshold (default 0.5); reason codes and questions come from the action definition, so editing templates/actions/*.json changes the model request and the policy.",
+          "files": [
+            "packages/core/src/decide.ts"
+          ]
+        },
+        {
+          "text": "The server stores what decide returns ({decision, context, raw}) in the decision log and webhook payloads; changing Decision, DecideResult or DecisionInput shapes breaks stored logs and payloads. About 100 imports of @kairos/core exist in apps/.",
+          "files": [
+            "packages/core/src/decide.ts",
+            "apps/server/src/modules/decisions/service.ts"
+          ]
+        },
+        {
+          "text": "listSlugsIn finds lists in an expression only from a literal slug in inList(value, 'slug'); the server uses it to block deleting a list that is still read. A computed slug is invisible to it.",
+          "files": [
+            "packages/core/src/rulesets.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-edge",
+      "title": "@finic-ai/kairos-edge: Cloudflare Worker, Fastly Compute and Lambda@Edge handlers that run the client-settings routes at the edge and sign decisions for the origin.",
+      "files": [
+        "packages/edge/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @finic-ai/kairos-edge run typecheck",
+          "why": "types of the edge package"
+        },
+        {
+          "run": "pnpm exec vitest run packages/edge/test",
+          "why": "edge handler tests"
+        }
+      ],
+      "risks": [
+        {
+          "text": "The edge signs with Web Crypto and the SDK origin verifies with node createHmac; both must give the same hex for the same hashKey, or the origin ignores the x-kairos-edge signature and only logs a report.",
+          "files": [
+            "packages/edge/src/edge.ts",
+            "packages/sdk/src/middleware.ts"
+          ]
+        },
+        {
+          "text": "Secrets come from the platform environment (KAIROS_API_KEY, KAIROS_HASH_KEY, KAIROS_URL; Fastly reads a secret store) and the client is cached on those values.",
+          "files": [
+            "packages/edge/src/cloudflare.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-eval",
+      "title": "The evaluation suite: 100 synthetic withdrawal cases through the real decide() with a file cache of model answers, compared with the accepted baseline.",
+      "files": [
+        "packages/eval/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm eval",
+          "why": "exits 1 if catch_rate falls or false_action_rate rises against accepted.json"
+        },
+        {
+          "run": "pnpm --filter @kairos/eval run typecheck",
+          "why": "types of the suite"
+        }
+      ],
+      "risks": [
+        {
+          "text": "The cache key is a hash of JSON.stringify({model, context, questions}): any change in context content or key order, questions, reasons or model name is a cache miss and a live Grayson call (paid; throws without GRAYSON_API_KEY). Nothing prunes old files.",
+          "files": [
+            "packages/eval/src/run.ts"
+          ]
+        },
+        {
+          "text": "cache/ and cases/ are gitignored, so a fresh clone has neither: run pnpm eval:generate first. accepted.json is committed, so the first run compares fresh answers with a baseline from other cached answers.",
+          "files": [
+            "packages/eval/src/run.ts",
+            ".gitignore"
+          ]
+        },
+        {
+          "text": "The model is not repeatable (25 of 100 answers differed on a resend); a one-case difference is not a result. Use eval:accept only after a deliberate improvement and update the baseline table in evaluation.md.",
+          "files": [
+            "packages/eval/src/run.ts",
+            "docs/development/evaluation.md"
+          ]
+        },
+        {
+          "text": "The runner uses templates/actions/withdrawal.json, shared with the examples; editing it changes the eval requests and policy and needs a re-eval. Nothing in pnpm test fails when eval is skipped.",
+          "files": [
+            "packages/eval/src/withdrawal.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-kairosid",
+      "title": "@finic-ai/kairosid: device, visit and browser identifiers of a visitor for Kairos clients.",
+      "files": [
+        "packages/kairosid/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @finic-ai/kairosid run typecheck",
+          "why": "types of kairosid"
+        },
+        {
+          "run": "pnpm exec vitest run packages/kairosid/test",
+          "why": "its tests"
+        }
+      ],
+      "risks": [
+        {
+          "text": "The SDK depends on it as a workspace:* devDependency and it is built with tsc to dist; a change to the id format changes the cookies and device ids the SDK and edge send.",
+          "files": [
+            "packages/kairosid/package.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-sdk",
+      "title": "@finic-ai/kairos, the TypeScript client: batched track, decide with fallback, Express/Hono middleware, browser client, edge settings routes.",
+      "files": [
+        "packages/sdk/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @finic-ai/kairos run typecheck",
+          "why": "types of the SDK"
+        },
+        {
+          "run": "pnpm exec vitest run packages/sdk/test",
+          "why": "client and middleware tests"
+        },
+        {
+          "run": "pnpm --filter @finic-ai/kairos run build",
+          "why": "tsup and tsc build to dist"
+        }
+      ],
+      "risks": [
+        {
+          "text": "The Express middleware runs its edge and decide-route work in a detached async function with no try/catch and no error path to next(): if fromEdge or decideRoute throws, next() is never called and the request hangs. There is no four-argument error handler; the example relies on Express 5 forwarding rejected async handlers (it would hang on Express 4).",
+          "files": [
+            "packages/sdk/src/middleware.ts",
+            "packages/sdk/examples/express.ts"
+          ]
+        },
+        {
+          "text": "\"Never throws\" covers delivery only: track and decide with no entity throw KairosError, and decide without a fallback throws on timeout or error. track is queued (20 events or 2 s, drops the oldest when full), so call shutdown() before exit or events are lost.",
+          "files": [
+            "packages/sdk/src/client.ts"
+          ]
+        },
+        {
+          "text": "In the repo, main/exports point at src/*.ts; only publishConfig swaps them to dist, so a path that works in the workspace can be missing from the published package.",
+          "files": [
+            "packages/sdk/package.json"
+          ]
+        },
+        {
+          "text": "ksk_ (secret) and kpk_ (public) are not enforced in code, only in docs: nothing stops a secret key being put in a browser bundle.",
+          "files": [
+            "packages/sdk/src/client.ts",
+            "packages/sdk/src/browser.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-sdk-python",
+      "title": "finic-kairos, the stdlib-only Python port of the client, middleware, importer and training helpers.",
+      "files": [
+        "packages/sdk-python/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm test:python",
+          "why": "the Python SDK unit tests"
+        }
+      ],
+      "risks": [
+        {
+          "text": "It mirrors the TypeScript SDK file by file (client, middleware, settings, webhooks) and nothing compares them: a change to hashing, the edge header or fallback must be made in both, and both are released together.",
+          "files": [
+            "packages/sdk-python/src/kairos/middleware.py",
+            "packages/sdk-python/pyproject.toml"
+          ]
+        },
+        {
+          "text": "Must stay standard library only (dependencies = []).",
+          "files": [
+            "packages/sdk-python/pyproject.toml"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "root",
+      "title": "Workspace config: pnpm workspace, TS base, vitest, Docker, Vercel build, .env.example, AGENTS.md.",
+      "files": [
+        ".dockerignore",
+        ".env.example",
+        ".git-blame-ignore-revs",
+        ".gitignore",
+        ".prettierignore",
+        ".prettierrc.json",
+        "AGENTS.md",
+        "Dockerfile",
+        "LICENSE",
+        "README.md",
+        "docker-compose.yml",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.base.json",
+        "vercel.json",
+        "vitest.config.ts"
+      ],
+      "checks": [
+        {
+          "run": "pnpm test",
+          "why": "every vitest suite: core, server (starts a throwaway Postgres), CLI, console, SDK, edge"
+        },
+        {
+          "run": "pnpm run typecheck",
+          "why": "types of every package"
+        },
+        {
+          "run": "pnpm run format:check",
+          "why": "Prettier at width 120"
+        }
+      ],
+      "risks": [
+        {
+          "text": "vercel.json builds with pnpm build:vercel && pnpm db:migrate: the build applies migrations, the function never does.",
+          "files": [
+            "vercel.json"
+          ]
+        },
+        {
+          "text": "The root vitest config has a globalSetup that starts a throwaway embedded Postgres (or uses KAIROS_TEST_DATABASE_URL), so pnpm test needs that to be startable.",
+          "files": [
+            "vitest.config.ts"
+          ]
+        },
+        {
+          "text": "AGENTS.md sets branch names {type}/{name} and commit subjects {type}: Imperative message, with no agent attribution.",
+          "files": [
+            "AGENTS.md"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scripts",
+      "title": "dev.sh: runs the API, the console and optionally the worker in one terminal for development.",
+      "files": [
+        "scripts/**"
+      ],
+      "checks": [],
+      "risks": [
+        {
+          "text": "Stops any process already listening on the API or console port before starting, so running it kills an unrelated server on 8787 or 5273.",
+          "files": [
+            "scripts/dev.sh"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "templates",
+      "title": "JSON templates for actions, entities, events, rulesets, case views and webhooks; also read by the server at run time and by the examples and eval.",
+      "files": [
+        "templates/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm exec vitest run packages/core/test",
+          "why": "validates action templates and that the generated event docs match"
+        },
+        {
+          "run": "pnpm docs:events",
+          "why": "rewrites docs/templates/events from the event templates"
+        }
+      ],
+      "risks": [
+        {
+          "text": "The server loads templates from templates/ at run time (KAIROS_TEMPLATES, bundled beside the Vercel function); a ruleset file that is not valid is silently left out.",
+          "files": [
+            "apps/server/src/modules/rulesets/libs/templates.ts",
+            "apps/server/src/platform/config.ts"
+          ]
+        },
+        {
+          "text": "Changing an event template without pnpm docs:events fails the core test, since docs/templates/events is generated from it.",
+          "files": [
+            "templates/render.ts"
+          ]
+        },
+        {
+          "text": "templates/actions/withdrawal.json is shared by the examples and the evaluation suite: change it only with a re-run of pnpm eval.",
+          "files": [
+            "packages/eval/src/withdrawal.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "server-migrations",
+      "title": "Generated Drizzle SQL migrations and snapshots for the server's Postgres schema.",
+      "files": [
+        "apps/server/drizzle/**",
+        "apps/server/drizzle.config.ts"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/server run db:generate",
+          "why": "regenerates from apps/server/src/db/schema so the snapshot matches the schema"
+        },
+        {
+          "run": "pnpm db:migrate",
+          "why": "applies the migrations to DATABASE_URL or the embedded Postgres"
+        }
+      ],
+      "risks": [
+        {
+          "text": "A migration that has been merged or deployed must never be edited or deleted: a database may have run it. Add a new one instead.",
+          "files": [
+            "apps/server/drizzle/**"
+          ]
+        },
+        {
+          "text": "A PR carries at most one migration; if the schema changes again in the PR, regenerate that one. With DATABASE_URL the server does not migrate on start: a deployment must run pnpm db:migrate, and there is no downgrade (restore a backup).",
+          "files": [
+            "apps/server/drizzle/**"
+          ]
+        },
+        {
+          "text": "Hand-edit the SQL only where the generator cannot express the change (backfill, SQL function, special index), and say why in the PR. The SQL function kairos_id(prefix, time) from the baseline makes ids in the same format as newId.",
+          "files": [
+            "apps/server/drizzle/**"
+          ]
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "id": "module-layers",
+      "rule": "A server module root holds only index, route, service, repo, types and schema (one of each); everything else sits in libs/ behind libs/index.ts, only repo.ts runs SQL, and imports flow route to service to repository.",
+      "why": "structure.test fails and the production Test stage stops the release (as in 4c4eaab).",
+      "files": [
+        "apps/server/src/modules/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm exec vitest run apps/server/test/structure.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "password-72-bytes",
+      "rule": "Every place a password is set must use the password schema: at least 8 and at most 72 bytes.",
+      "why": "bcryptjs reads only 72 bytes, so a longer password is silently truncated and users could sign in with a different tail.",
+      "files": [
+        "apps/server/src/modules/auth/schema.ts",
+        "apps/server/src/platform/crypto.ts"
+      ]
+    },
+    {
+      "id": "scope-every-query",
+      "rule": "Every customer table and query is scoped by workspace_id and environment_id.",
+      "why": "Otherwise one customer's or sandbox's data leaks into another.",
+      "files": [
+        "apps/server/src/modules/**",
+        "apps/server/src/db/schema/**"
+      ]
+    },
+    {
+      "id": "json-not-jsonb-for-model-input",
+      "rule": "Values the model reads or a person wrote in an order (event and entity properties, action and entity definitions, the logged context) are json columns, not jsonb.",
+      "why": "jsonb sorts keys and key order changes the model's answers (14 of 100 evaluation decisions).",
+      "files": [
+        "apps/server/src/db/schema/**",
+        "packages/core/src/context.ts"
+      ]
+    },
+    {
+      "id": "migrations-immutable",
+      "rule": "A PR has at most one migration, and a merged or deployed migration is never edited or deleted.",
+      "why": "A database may have already run it; editing it makes schemas diverge between installs.",
+      "files": [
+        "apps/server/drizzle/**",
+        "apps/server/src/db/schema/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/server run db:generate"
+        }
+      ]
+    },
+    {
+      "id": "rules-only-more-severe",
+      "rule": "A policy rule can only raise the outcome (approve, step_up, review, block), never lower it.",
+      "why": "A rule meant as a safeguard would turn a held or blocked action into an approval.",
+      "files": [
+        "packages/core/src/policy.ts",
+        "templates/actions/**"
+      ]
+    },
+    {
+      "id": "measure-decision-changes",
+      "rule": "A change to the context builder, questions or policy is run through pnpm eval before it is kept.",
+      "why": "Small context changes move decisions and nothing in pnpm test catches it.",
+      "files": [
+        "packages/core/src/**",
+        "packages/eval/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm eval"
+        }
+      ]
+    },
+    {
+      "id": "same-hash-key-everywhere",
+      "rule": "hashKey is the same on every server, the edge worker and the Python SDK (HMAC-SHA256 hex).",
+      "why": "Hashed fields and session cookies stop matching, and the origin ignores the edge's signed decision.",
+      "files": [
+        "packages/sdk/src/middleware.ts",
+        "packages/edge/src/edge.ts",
+        "packages/sdk-python/src/kairos/middleware.py"
+      ]
+    },
+    {
+      "id": "console-same-origin",
+      "rule": "The console and the API share one origin (dev proxy or the server serving the build), with no CORS.",
+      "why": "The kairos_session cookie would not be sent and every call returns 401.",
+      "files": [
+        "apps/console/vite.config.ts",
+        "apps/server/src/console.ts"
+      ]
+    },
+    {
+      "id": "customer-docs-no-server-settings",
+      "rule": "Customer docs pages never name server settings or repository paths; those belong in docs/deployment/.",
+      "why": "The public /docs would leak operator configuration; the docs build only warns.",
+      "files": [
+        "docs/**",
+        "apps/console/docs/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/console run build"
+        }
+      ]
+    }
+  ],
+  "ignore": [],
+  "hotspots": [
+    {
+      "file": "apps/server/src/modules/cases/repo.ts",
+      "symbol": "queuesForAction",
+      "line": 32,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/cases/repo.ts",
+      "symbol": "hasIntakeFor",
+      "line": 37,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/cases/repo.ts",
+      "symbol": "caseWhere",
+      "line": 146,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/cases/repo.ts",
+      "symbol": "selectCases",
+      "line": 166,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/cases/repo.ts",
+      "symbol": "findCaseSummary",
+      "line": 194,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/catalog/libs/commands.ts",
+      "symbol": "listCommands",
+      "line": 139,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/catalog/repo.ts",
+      "symbol": "entitiesRepository",
+      "line": 81,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/catalog/repo.ts",
+      "symbol": "entityRows",
+      "line": 82,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/catalog/repo.ts",
+      "symbol": "others",
+      "line": 169,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/catalog/repo.ts",
+      "symbol": "labelsOf",
+      "line": 180,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/catalog/repo.ts",
+      "symbol": "eraseEntity",
+      "line": 536,
+      "labels": [
+        "db-write",
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Writes the database, queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/catalog/service.ts",
+      "symbol": "setProperties",
+      "line": 38,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/environments/repo.ts",
+      "symbol": "copyEntityIds",
+      "line": 19,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/environments/repo.ts",
+      "symbol": "copyFromOptions",
+      "line": 27,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/environments/repo.ts",
+      "symbol": "listCopyOptions",
+      "line": 65,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/environments/repo.ts",
+      "symbol": "validateCopySelection",
+      "line": 91,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/environments/repo.ts",
+      "symbol": "environmentsRepository",
+      "line": 159,
+      "labels": [
+        "db-write",
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Writes the database, queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/experiments/service.ts",
+      "symbol": "listExperiments",
+      "line": 75,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/experiments/service.ts",
+      "symbol": "getExperiment",
+      "line": 84,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/ingest/repo.ts",
+      "symbol": "eventsRepository",
+      "line": 43,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/jobs/repo.ts",
+      "symbol": "listJobs",
+      "line": 12,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/jobs/repo.ts",
+      "symbol": "countJobs",
+      "line": 24,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/jobs/repo.ts",
+      "symbol": "findJob",
+      "line": 31,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/jobs/repo.ts",
+      "symbol": "retryDeadJob",
+      "line": 36,
+      "labels": [
+        "db-write"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Writes the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/observe/repo.ts",
+      "symbol": "analyticsRepository",
+      "line": 7,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/observe/repo.ts",
+      "symbol": "stats",
+      "line": 8,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/observe/repo.ts",
+      "symbol": "usage",
+      "line": 33,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/observe/repo.ts",
+      "symbol": "metricOptions",
+      "line": 142,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/retention/repo.ts",
+      "symbol": "batch",
+      "line": 20,
+      "labels": [
+        "db-write"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Writes the database"
+    },
+    {
+      "file": "apps/server/src/modules/retention/repo.ts",
+      "symbol": "purgeWorkspace",
+      "line": 35,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/tenancy/repo.ts",
+      "symbol": "tenancyRepository",
+      "line": 27,
+      "labels": [
+        "db-write",
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Writes the database, queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/tenancy/repo.ts",
+      "symbol": "adoptOrphans",
+      "line": 61,
+      "labels": [
+        "db-write",
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Writes the database, queries the database"
+    },
+    {
+      "file": "apps/server/src/modules/tenancy/service.ts",
+      "symbol": "createTenancy",
+      "line": 49,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database; called from 1 other file read"
+    },
+    {
+      "file": "apps/server/src/modules/tenancy/service.ts",
+      "symbol": "roleOf",
+      "line": 63,
+      "labels": [
+        "db-read"
+      ],
+      "rules": [
+        "scope-every-query"
+      ],
+      "note": "Queries the database"
+    },
+    {
+      "file": "apps/server/src/platform/crypto.ts",
+      "symbol": "hashToken",
+      "line": 19,
+      "labels": [
+        "crypto"
+      ],
+      "rules": [
+        "password-72-bytes"
+      ],
+      "note": "Hashes, signs or encrypts; called from 1 other file read"
+    },
+    {
+      "file": "packages/edge/src/edge.ts",
+      "symbol": "hmac",
+      "line": 44,
+      "labels": [
+        "crypto"
+      ],
+      "rules": [
+        "same-hash-key-everywhere"
+      ],
+      "note": "Hashes, signs or encrypts"
+    },
+    {
+      "file": "packages/edge/src/edge.ts",
+      "symbol": "edge",
+      "line": 55,
+      "labels": [
+        "crypto"
+      ],
+      "rules": [
+        "same-hash-key-everywhere"
+      ],
+      "note": "Hashes, signs or encrypts"
+    },
+    {
+      "file": "packages/edge/src/edge.ts",
+      "symbol": "start",
+      "line": 214,
+      "labels": [
+        "queue"
+      ],
+      "rules": [
+        "same-hash-key-everywhere"
+      ],
+      "note": "Enqueues or retries work"
+    },
+    {
+      "file": "packages/edge/src/edge.ts",
+      "symbol": "pull",
+      "line": 218,
+      "labels": [
+        "queue"
+      ],
+      "rules": [
+        "same-hash-key-everywhere"
+      ],
+      "note": "Enqueues or retries work"
+    },
+    {
+      "file": "packages/sdk/src/middleware.ts",
+      "symbol": "sideOf",
+      "line": 194,
+      "labels": [
+        "crypto"
+      ],
+      "rules": [
+        "same-hash-key-everywhere"
+      ],
+      "note": "Hashes, signs or encrypts"
+    }
+  ]
+}
