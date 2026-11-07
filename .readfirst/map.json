@@ -1,0 +1,5192 @@
+{
+  "format": "readfirst/map@1",
+  "groups": [
+    {
+      "id": "apps-server-platform",
+      "title": "Hono server wiring: app and boot, API-key and session auth, workspaces and roles, environments, client settings, webhooks, jobs, MCP, activity log, retention, Drizzle schema and migrations.",
+      "files": [
+        "apps/server/src/*.ts",
+        "apps/server/src/db/**",
+        "apps/server/src/platform/**",
+        "apps/server/src/services/**",
+        "apps/server/src/types/**",
+        "apps/server/src/modules/auth/**",
+        "apps/server/src/modules/tenancy/**",
+        "apps/server/src/modules/environments/**",
+        "apps/server/src/modules/clients/**",
+        "apps/server/src/modules/cloudflare/**",
+        "apps/server/src/modules/jobs/**",
+        "apps/server/src/modules/mcp/**",
+        "apps/server/src/modules/webhooks/**",
+        "apps/server/src/modules/activities/**",
+        "apps/server/src/modules/retention/**",
+        "apps/server/drizzle/**",
+        "apps/server/scripts/**",
+        "apps/server/package.json",
+        "apps/server/tsconfig.json",
+        "apps/server/drizzle.config.ts"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/server run typecheck",
+          "why": "types of the server"
+        },
+        {
+          "run": "pnpm test",
+          "why": "the whole vitest suite (starts a throwaway Postgres for the server tests)"
+        },
+        {
+          "run": "pnpm exec vitest run apps/server/test/migrations.test.ts apps/server/test/structure.test.ts",
+          "why": "migrations replay and module layout"
+        }
+      ],
+      "risks": [
+        {
+          "text": "A public API key is limited by a path allowlist in the apiAuth middleware (only POST /v1/events and GET /v1/client-settings), not by each handler: PUT /client-settings has no role check of its own and is safe only because of this list, and any new /v1 route is open to public keys that a web page exposes unless the list keeps them out. - apps/server/src/platform/auth/api-auth.ts:36-39",
+          "files": [
+            "apps/server/src/platform/auth/api-auth.ts"
+          ]
+        },
+        {
+          "text": "The inbound webhook route reads only Content-Length to refuse a large body; a chunked request has no header (Number(undefined) is NaN, and NaN > MAX_BODY is false), so it is buffered whole by arrayBuffer() before anything refuses it. No body limit exists elsewhere in src. - apps/server/src/modules/webhooks/route.ts:188-190",
+          "files": [
+            "apps/server/src/modules/webhooks/route.ts"
+          ]
+        },
+        {
+          "text": "Sign-in answers an unknown or inactive account without running bcrypt, while a wrong password pays for a compare, so response time shows whether an email has an account. - apps/server/src/services/user.service.ts:107-109",
+          "files": [
+            "apps/server/src/services/user.service.ts"
+          ]
+        },
+        {
+          "text": "The 72-byte bcrypt limit is enforced only by the sign-up schema, not inside hashPassword/verifyPassword, so a new caller that hashes without that schema silently ignores everything past byte 72. - apps/server/src/platform/crypto.ts:22-30",
+          "files": [
+            "apps/server/src/platform/crypto.ts"
+          ]
+        },
+        {
+          "text": "Webhook signing secrets are stored encrypted with KAIROS_ENCRYPTION_KEY (AES-256-GCM); a server started with another key cannot read them, and the delivery worker fails each such webhook with a problem message instead of sending - apps/server/src/platform/secrets.ts:8 and apps/server/src/modules/webhooks/libs/worker.ts:71-75",
+          "files": [
+            "apps/server/src/platform/secrets.ts",
+            "apps/server/src/modules/webhooks/libs/worker.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apps-server-domain",
+      "title": "Server feature modules under /v1 (ingest, actions, decisions, cases, catalog, lists, rulesets, models, experiments, workflows, observe) and the server tests.",
+      "files": [
+        "apps/server/src/modules/actions/**",
+        "apps/server/src/modules/cases/**",
+        "apps/server/src/modules/catalog/**",
+        "apps/server/src/modules/decisions/**",
+        "apps/server/src/modules/experiments/**",
+        "apps/server/src/modules/ingest/**",
+        "apps/server/src/modules/lists/**",
+        "apps/server/src/modules/models/**",
+        "apps/server/src/modules/observe/**",
+        "apps/server/src/modules/rulesets/**",
+        "apps/server/src/modules/workflows/**",
+        "apps/server/test/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/server run typecheck",
+          "why": "types of the server"
+        },
+        {
+          "run": "pnpm test",
+          "why": "the whole vitest suite (starts a throwaway Postgres for the server tests)"
+        },
+        {
+          "run": "pnpm exec vitest run apps/server/test/structure.test.ts",
+          "why": "module root holds only layers; other files sit behind libs/index.ts"
+        },
+        {
+          "run": "pnpm exec vitest run apps/server/test/workflow-lists.test.ts apps/server/test/workflow-rulesets.test.ts apps/server/test/rulesets.test.ts",
+          "why": "list delete protection and ruleset inputs in workflows"
+        }
+      ],
+      "risks": [
+        {
+          "text": "Deleting a list is refused when a ruleset or a workflow uses it, but the workflow side is a recursive scan of trigger, steps and draft for `list.*` step types and inList slugs: a new step type that names a list another way is missed and the list can be deleted under it. - apps/server/src/modules/lists/service.ts:206-207 and :225 (history 544cb7e)",
+          "files": [
+            "apps/server/src/modules/lists/service.ts"
+          ]
+        },
+        {
+          "text": "In a ruleset step each input template that names a missing field is dropped on its own (only ExpressionError 'field not found' is swallowed), so the ruleset sees a missing input; resolving all inputs together again made one missing field fail the whole step. - apps/server/src/modules/workflows/libs/steps.ts:883 (history 544cb7e)",
+          "files": [
+            "apps/server/src/modules/workflows/libs/steps.ts"
+          ]
+        },
+        {
+          "text": "Workflow-hook and model-upload size limits read Content-Length, then buffer the entire body (text() / arrayBuffer()) and only then compare its real size; a chunked request without the header is held fully in memory before the 413. - apps/server/src/modules/workflows/route.ts:359-362 and apps/server/src/modules/models/libs/body.ts:13-16",
+          "files": [
+            "apps/server/src/modules/workflows/route.ts",
+            "apps/server/src/modules/models/libs/body.ts"
+          ]
+        },
+        {
+          "text": "A file left at the root of a module besides index, route, service, repo, types and schema, or not exported through libs/index.ts, fails the structure test; catalog commands once sat at the module root and broke the Test stage - apps/server/test/structure.test.ts:67-69 and apps/server/src/modules/catalog/libs/index.ts (history 4c4eaab)",
+          "files": [
+            "apps/server/test/structure.test.ts",
+            "apps/server/src/modules/catalog/libs/index.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apps-console",
+      "title": "React and Vite web console for operators (dashboards, lists, rulesets, workflows, settings), which also builds the /docs site from docs/ in the order of docs/pages.ts.",
+      "files": [
+        "apps/console/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/console run typecheck",
+          "why": "types of the console"
+        },
+        {
+          "run": "pnpm --filter @kairos/console build",
+          "why": "builds the docs site; its plugin warns about broken links and customer pages with server settings, read the warnings"
+        }
+      ],
+      "risks": [
+        {
+          "text": "A property value from outside can blank the console: the link format only checks the https? prefix and then calls new URL(value) while rendering, so 'http://' or 'http://[' throws, and there is no error boundary in apps/console/src to catch it. - apps/console/src/components/entities/PropertyValue.tsx:91-94",
+          "files": [
+            "apps/console/src/components/entities/PropertyValue.tsx"
+          ]
+        },
+        {
+          "text": "Every non-GET call invalidates all cached queries and a 401 on any non-/auth/ path signs the user out; a read-style POST must pass {changes:false} or it refetches everything. - apps/console/src/api/client.ts:48-56",
+          "files": [
+            "apps/console/src/api/client.ts"
+          ]
+        },
+        {
+          "text": "Path parts are encoded only where the caller remembers encodeURIComponent, and the X-Kairos workspace headers go out only for paths starting /v1/ or /app/: a new wrapper that interpolates a raw id or uses another prefix breaks on '/' or '?' or is sent without a workspace. - apps/console/src/api/rulesets.ts:44-47 and apps/console/src/api/client.ts:35",
+          "files": [
+            "apps/console/src/api/rulesets.ts",
+            "apps/console/src/api/client.ts"
+          ]
+        },
+        {
+          "text": "The list page shows what uses a list from both rulesets and workflows (the readers object from the API must carry `workflows`); dropping that field makes a list used by a workflow look unused and invites a delete the server then refuses. - apps/console/src/api/rulesets.ts:47 and apps/console/src/pages/settings/lists/ListPage.tsx (history 544cb7e)",
+          "files": [
+            "apps/console/src/api/rulesets.ts",
+            "apps/console/src/pages/settings/lists/ListPage.tsx"
+          ]
+        },
+        {
+          "text": "Only VITE_KAIROS_DOCS_URL and VITE_KAIROS_SHOW_GET_STARTED are read from import.meta.env; both are public, and anything else named VITE_ is inlined into the browser bundle, so never name a secret that way. - apps/console/src/layouts/DashboardLayout.tsx:20,28",
+          "files": [
+            "apps/console/src/layouts/DashboardLayout.tsx"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apps-cli",
+      "title": "The `kairos` command line: signs in, keeps profiles in ~/.kairos/config.json and calls the server API.",
+      "files": [
+        "apps/cli/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/cli run typecheck",
+          "why": "types of the CLI"
+        },
+        {
+          "run": "pnpm test",
+          "why": "the whole vitest suite (starts a throwaway Postgres for the server tests)"
+        }
+      ],
+      "risks": [
+        {
+          "text": "Without a terminal the password is the first line of all of stdin with a trailing \\r stripped but spaces kept, while the interactive prompt trims; the same secret can differ by path. - apps/cli/src/prompt.ts:5-22",
+          "files": [
+            "apps/cli/src/prompt.ts"
+          ]
+        },
+        {
+          "text": "The config file holds API keys and sessions: writeConfig chmods 0600 after writing because mode applies only when the file is created, and a new writer must do the same. - apps/cli/src/config.ts:41-45",
+          "files": [
+            "apps/cli/src/config.ts"
+          ]
+        },
+        {
+          "text": "Precedence is flag, then KAIROS_API_KEY/KAIROS_URL, then profile; an API key in the environment drops the profile's session, and an empty variable counts as unset. - apps/cli/src/config.ts:62-72",
+          "files": [
+            "apps/cli/src/config.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-core",
+      "title": "Decision engine library: actions, rulesets, scoring models (grayson, xgboost, gbdt, logistic), importing, sessions, webhooks.",
+      "files": [
+        "packages/core/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/core run typecheck",
+          "why": "types of core"
+        },
+        {
+          "run": "pnpm test",
+          "why": "the whole vitest suite (starts a throwaway Postgres for the server tests)"
+        }
+      ],
+      "risks": [
+        {
+          "text": "The action validator checks context.reasonThreshold with `< 0 || > 1` only, so a string or other non-number makes both comparisons false and passes, and decide then uses it as the threshold. - packages/core/src/actions.ts:196-198",
+          "files": [
+            "packages/core/src/actions.ts"
+          ]
+        },
+        {
+          "text": "Model code reads properties in object key order (Object.keys/entries), so any step that reorders keys, such as storing them as jsonb, changes the model's answers. - packages/core/src/logistic.ts:49-53 and packages/core/src/xgboost.ts:225 (AGENTS.md:89)",
+          "files": [
+            "packages/core/src/logistic.ts",
+            "packages/core/src/xgboost.ts"
+          ]
+        },
+        {
+          "text": "The CSV importer trims header names, skips blank lines and ends a record at \\r or \\n; nothing handles a byte-order mark, so a spreadsheet export can give the first column a hidden prefix. - packages/core/src/importing.ts:65-137",
+          "files": [
+            "packages/core/src/importing.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-sdk",
+      "title": "TypeScript client for Kairos with the express middleware, browser script, settings, routes and webhook verification.",
+      "files": [
+        "packages/sdk/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @finic-ai/kairos run typecheck",
+          "why": "types of the SDK"
+        },
+        {
+          "run": "pnpm test",
+          "why": "the whole vitest suite (starts a throwaway Postgres for the server tests)"
+        }
+      ],
+      "risks": [
+        {
+          "text": "verifyWebhook signs `id.timestamp.body` over the body text exactly as received, so a body that was parsed and re-serialized (for example by express.json) never matches; it also accepts a list of secrets only for rotation - packages/sdk/src/webhooks.ts:55-57,80",
+          "files": [
+            "packages/sdk/src/webhooks.ts"
+          ]
+        },
+        {
+          "text": "The event queue drops the oldest events once it holds maxQueueSize (10,000) and reports it only through onError, and a rejected non-retryable batch is dropped; a caller with no onError loses events silently - packages/sdk/src/client.ts:494-497,508-513",
+          "files": [
+            "packages/sdk/src/client.ts"
+          ]
+        },
+        {
+          "text": "The edge header signature covers the HTTP method and path, so a proxy that rewrites the path or a request with a different method makes verifyEdge return undefined and the signed decision is ignored - packages/sdk/src/routes.ts:239",
+          "files": [
+            "packages/sdk/src/routes.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-sdk-python",
+      "title": "Python client with WSGI/ASGI middleware, importer, training and edge-header verification.",
+      "files": [
+        "packages/sdk-python/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm test:python",
+          "why": "the Python unit tests"
+        }
+      ],
+      "risks": [
+        {
+          "text": "verify_edge compares the signature from the request header with hmac.compare_digest on two str values, which raises TypeError for a non-ASCII character, so a crafted x-kairos-edge header becomes a 500 unless a caller catches it. - packages/sdk-python/src/kairos/settings.py:36",
+          "files": [
+            "packages/sdk-python/src/kairos/settings.py"
+          ]
+        },
+        {
+          "text": "The importer opens the file with the caller's encoding (documented default utf-8-sig, which drops the spreadsheet byte-order mark) and newline=''; passing plain utf-8 keeps the mark in the first header. - packages/sdk-python/src/kairos/importer.py:62-69",
+          "files": [
+            "packages/sdk-python/src/kairos/importer.py"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-edge",
+      "title": "Edge adapters (Cloudflare Worker, Fastly Compute, Lambda@Edge) that serve the client-settings routes on a shared edge.ts.",
+      "files": [
+        "packages/edge/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @finic-ai/kairos-edge run typecheck",
+          "why": "types of the edge package"
+        },
+        {
+          "run": "pnpm test",
+          "why": "the whole vitest suite (starts a throwaway Postgres for the server tests)"
+        }
+      ],
+      "risks": [
+        {
+          "text": "The body is read only when readableBody(content-type, content-length) allows it; otherwise readJson returns undefined and drops the body without an error. - packages/edge/src/edge.ts:191-199",
+          "files": [
+            "packages/edge/src/edge.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-eval",
+      "title": "Offline evaluation suite, replay and experiments with an accepted baseline.",
+      "files": [
+        "packages/eval/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/eval run typecheck",
+          "why": "types of eval"
+        },
+        {
+          "run": "pnpm eval",
+          "why": "runs the evaluation against the accepted baseline and prints REGRESSION when catch or false-action rate worsens"
+        }
+      ],
+      "risks": [
+        {
+          "text": "Model answers are cached under a name made from the sha256 of JSON.stringify(request), so any change in the request's content or key order is a cache miss that calls Grayson (a paid call) and fails without GRAYSON_API_KEY - packages/eval/src/run.ts:23-31",
+          "files": [
+            "packages/eval/src/run.ts"
+          ]
+        },
+        {
+          "text": "`pnpm eval:accept` (--accept) overwrites accepted.json with the new result without comparing it to the old one, so accepting a regressed run hides the regression from every later run - packages/eval/src/run.ts:108-110",
+          "files": [
+            "packages/eval/src/run.ts"
+          ]
+        },
+        {
+          "text": "The cases file is read with trim() then split on newline and JSON.parse of each line, so one blank line inside the file crashes the whole run - packages/eval/src/run.ts:57-60 and packages/eval/src/replay.ts:121-124",
+          "files": [
+            "packages/eval/src/run.ts",
+            "packages/eval/src/replay.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "packages-kairosid",
+      "title": "Visitor device, visit and browser helpers for Kairos clients.",
+      "files": [
+        "packages/kairosid/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @finic-ai/kairosid run typecheck",
+          "why": "types of kairosid"
+        },
+        {
+          "run": "pnpm test",
+          "why": "the whole vitest suite (starts a throwaway Postgres for the server tests)"
+        }
+      ],
+      "risks": [
+        {
+          "text": "hash() is a 64-bit non-cryptographic mix written to run on http pages that have no Web Crypto; it is for fingerprint grouping and must not be used for anything that needs a secure digest - packages/kairosid/src/hash.ts:12-14",
+          "files": [
+            "packages/kairosid/src/hash.ts"
+          ]
+        },
+        {
+          "text": "readCookie falls back to the raw value when decodeURIComponent fails, so a malformed cookie is returned undecoded instead of being refused - packages/kairosid/src/cookies.ts:9-14",
+          "files": [
+            "packages/kairosid/src/cookies.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "templates",
+      "title": "Action, event, case-view, entity, ruleset and webhook templates as JSON, loaded by the examples and the evaluation suite, plus the renderer for the event docs pages.",
+      "files": [
+        "templates/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm exec vitest run packages/core/test/core.test.ts",
+          "why": "each event template follows its schema and its docs page matches the file"
+        },
+        {
+          "run": "pnpm docs:events",
+          "why": "regenerates docs/templates/events/ from the JSON"
+        }
+      ],
+      "risks": [
+        {
+          "text": "The pages in docs/templates/events/ are generated from the template JSON; a test fails when a page differs from its file, so edit the JSON and run `pnpm docs:events`, never the page. - templates/render.ts:2-6 and packages/core/test/core.test.ts:220-226",
+          "files": [
+            "templates/render.ts",
+            "packages/core/test/core.test.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "docs",
+      "title": "Documentation published at /docs (customers, operators, contributors).",
+      "files": [
+        "docs/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm --filter @kairos/console build",
+          "why": "docs build warns about customer pages that name server settings or paths"
+        }
+      ],
+      "risks": [
+        {
+          "text": "A page for customers must not mention pnpm, repository paths, localhost or server settings (KAIROS_*, SUPABASE_*, DATABASE_URL, VITE_*); the console docs build only warns, it does not fail, and a page missing from apps/console/docs/pages.ts is not published. - apps/console/docs/plugin.ts:19-27,160-166 (AGENTS.md Docs)",
+          "files": [
+            "apps/console/docs/plugin.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "examples",
+      "title": "Runnable examples of the SDK against a server.",
+      "files": [
+        "examples/**"
+      ],
+      "checks": [
+        {
+          "run": "pnpm test",
+          "why": "the whole vitest suite (starts a throwaway Postgres for the server tests)"
+        }
+      ],
+      "risks": [
+        {
+          "text": "13 of the examples read the key as `process.env.KAIROS_API_KEY ?? missingKey()` (ecommerce uses ||), and .env.example ships the line `KAIROS_API_KEY=` blank, so an unedited .env passes an empty key to the client instead of stopping with the missing-key message - examples/bank-transfer.ts:14 and .env.example:76",
+          "files": []
+        }
+      ]
+    },
+    {
+      "id": "claude",
+      "title": ".claude settings: no agent attribution in commits and PRs.",
+      "files": [
+        ".claude/**"
+      ],
+      "checks": [],
+      "risks": []
+    },
+    {
+      "id": "scripts",
+      "title": "Developer script that runs the API, console and worker together.",
+      "files": [
+        "scripts/**"
+      ],
+      "checks": [],
+      "risks": [
+        {
+          "text": "dev.sh reads PORT, CONSOLE_PORT and KAIROS_WORKER from .env with sed and strips only double quotes, so trailing spaces, a CR or single quotes stay in the value; it also stops any process already listening on those ports. - scripts/dev.sh:13-19",
+          "files": [
+            "scripts/dev.sh"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "root",
+      "title": "Repository config: package scripts, workspace, Docker and Vercel build, vitest config, env example, agent rules.",
+      "files": [
+        ".dockerignore",
+        ".env.example",
+        ".git-blame-ignore-revs",
+        ".gitignore",
+        ".prettierignore",
+        ".prettierrc.json",
+        "AGENTS.md",
+        "Dockerfile",
+        "LICENSE",
+        "README.md",
+        "docker-compose.yml",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.base.json",
+        "vercel.json",
+        "vitest.config.ts"
+      ],
+      "checks": [
+        {
+          "run": "pnpm run typecheck",
+          "why": "types of every package"
+        },
+        {
+          "run": "pnpm test",
+          "why": "the whole vitest suite (starts a throwaway Postgres for the server tests)"
+        },
+        {
+          "run": "pnpm run format:check",
+          "why": "prettier"
+        }
+      ],
+      "risks": []
+    }
+  ],
+  "rules": [
+    {
+      "id": "admin-client-settings",
+      "why": "a member could change what the website script loads for every visitor. (apps/server/src/modules/clients/route.ts:36-38)",
+      "flow": {
+        "entry": "PUT /workspaces/*/client-settings",
+        "reaches": "clients.save",
+        "must": [
+          "check"
+        ]
+      },
+      "rule": "Changing a workspace's client settings through the console route needs the admin role.",
+      "files": [
+        "apps/server/src/modules/clients/route.ts"
+      ]
+    },
+    {
+      "id": "public-key-scope",
+      "why": "public keys sit in web pages, so anyone could otherwise call the API with a leaked key. (apps/server/src/platform/auth/api-auth.ts:35-45)",
+      "rule": "A public key (kpk_) may only POST /v1/events and GET /v1/client-settings; every other /v1 route refuses it.",
+      "files": [
+        "apps/server/src/platform/auth/api-auth.ts"
+      ]
+    },
+    {
+      "id": "v1-behind-apiauth",
+      "why": "a route above it writes data for unauthenticated callers. (apps/server/src/app.ts:166-176)",
+      "rule": "Every /v1 route is mounted after apiAuth; only inbound webhooks and workflow hooks sit before it and authenticate by the token in the URL.",
+      "files": [
+        "apps/server/src/app.ts"
+      ]
+    },
+    {
+      "id": "case-reads-require-case",
+      "why": "reviewers would read cases of queues they are not allowed into. (apps/server/src/modules/cases/service.ts:749-754)",
+      "flow": {
+        "entry": "GET /cases/:id/view",
+        "must": [
+          "check:requireCase"
+        ]
+      },
+      "rule": "Case reads go through requireCase, which answers 404 for a case whose queue the viewer cannot see.",
+      "files": [
+        "apps/server/src/modules/cases/service.ts"
+      ]
+    },
+    {
+      "id": "event-id-once",
+      "why": "a retried batch would double-count totals and start work twice. (apps/server/src/modules/ingest/service.ts:51-55)",
+      "rule": "An event id is stored once, and only newly stored ids go on to automatic decisions and workflows.",
+      "files": [
+        "apps/server/src/modules/ingest/service.ts"
+      ]
+    },
+    {
+      "id": "one-migration-never-edit",
+      "why": "databases that already ran it drift from the schema. (AGENTS.md:82-86)",
+      "rule": "A PR carries at most one migration, generated by db:generate, and a migration that reached production is never edited.",
+      "files": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "id": "json-not-jsonb",
+      "why": "jsonb sorts keys and the key order changes the model's answers. (AGENTS.md:89)",
+      "rule": "Event and entity properties, action and entity definitions and the decision context are stored as json, not jsonb.",
+      "files": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "id": "production-protected",
+      "why": "a rename or delete of production would drop the data and keys that live decisions use. (apps/server/src/modules/environments/service.ts:32 and apps/server/src/modules/environments/route.ts:57,72)",
+      "rule": "The production environment cannot be renamed or deleted through the environment routes; they go through sandbox(), which refuses production.",
+      "files": [
+        "apps/server/src/modules/environments/service.ts",
+        "apps/server/src/modules/environments/route.ts"
+      ]
+    },
+    {
+      "id": "generated-event-docs",
+      "why": "the core test fails when a page differs from its template. (packages/core/test/core.test.ts:220-226)",
+      "rule": "docs/templates/events/ is generated from templates/events/*.json with pnpm docs:events and never edited by hand.",
+      "files": [
+        "packages/core/test/core.test.ts"
+      ]
+    },
+    {
+      "id": "cli-config-0600",
+      "why": "other local users could read API keys and sessions. (apps/cli/src/config.ts:41-45)",
+      "rule": "The CLI config file is written with mode 0600 inside a 0700 directory, and chmodded after each write.",
+      "files": [
+        "apps/cli/src/config.ts"
+      ]
+    }
+  ],
+  "ignore": [],
+  "vocabulary": {
+    "checks": [
+      {
+        "name": "requireCase",
+        "evidence": "apps/server/src/modules/cases/service.ts:752",
+        "why": "throws notFound unless the case's queue is visible to the viewer"
+      },
+      {
+        "name": "requireRole",
+        "evidence": "apps/server/src/modules/tenancy/service.ts:87",
+        "why": "throws notFound, forbidden or forbidden-role unless the member has at least the needed role"
+      },
+      {
+        "name": "requireAdmin",
+        "evidence": "apps/server/src/modules/webhooks/service.ts:116",
+        "why": "calls requireRole admin; jobs/route.ts:14 delegates to it"
+      },
+      {
+        "name": "requireSession",
+        "evidence": "apps/server/src/platform/auth/session.ts:36",
+        "why": "answers 401 not_signed_in without a valid session"
+      },
+      {
+        "name": "apiAuth",
+        "evidence": "apps/server/src/platform/auth/api-auth.ts:30",
+        "why": "answers 401 for an unknown key, 403 for a public key outside its allowlist"
+      }
+    ],
+    "notChecks": [
+      {
+        "name": "requireConfigured",
+        "why": "only throws 503 when webhooks are not set up on this server; it does not look at who calls"
+      }
+    ],
+    "sinks": [
+      {
+        "call": "clients.save",
+        "label": "db-write",
+        "evidence": "apps/server/src/modules/clients/route.ts:38"
+      },
+      {
+        "call": "putAction",
+        "label": "db-write",
+        "evidence": "apps/server/src/modules/actions/service.ts:67"
+      },
+      {
+        "call": "insertEvents",
+        "label": "db-write",
+        "evidence": "apps/server/src/modules/ingest/service.ts:51"
+      }
+    ],
+    "public": [
+      {
+        "entry": "GET /health",
+        "why": "liveness probe that answers {ok:true} and touches no data (app.ts:135)"
+      },
+      {
+        "entry": "POST /signup",
+        "why": "sign-up; refused with 403 signup_closed unless sign-up is open or the caller has an invite (auth/route.ts:204)"
+      },
+      {
+        "entry": "POST /login",
+        "why": "credential check itself"
+      }
+    ]
+  },
+  "hotspots": [
+    {
+      "file": "apps/cli/src/config.ts",
+      "symbol": "configPath",
+      "line": 26,
+      "labels": [
+        "secrets"
+      ],
+      "rules": [
+        "cli-config-0600"
+      ],
+      "note": "Reads secrets or the environment"
+    },
+    {
+      "file": "apps/cli/src/config.ts",
+      "symbol": "writeConfig",
+      "line": 39,
+      "labels": [
+        "fs-write"
+      ],
+      "rules": [
+        "cli-config-0600"
+      ],
+      "note": "Writes files"
+    },
+    {
+      "file": "apps/cli/src/config.ts",
+      "symbol": "profileName",
+      "line": 55,
+      "labels": [
+        "secrets"
+      ],
+      "rules": [
+        "cli-config-0600"
+      ],
+      "note": "Reads secrets or the environment"
+    },
+    {
+      "file": "apps/cli/src/config.ts",
+      "symbol": "connection",
+      "line": 67,
+      "labels": [
+        "secrets"
+      ],
+      "rules": [
+        "cli-config-0600"
+      ],
+      "note": "Reads secrets or the environment"
+    },
+    {
+      "file": "apps/server/src/modules/cases/service.ts",
+      "symbol": "notify",
+      "line": 302,
+      "labels": [
+        "queue"
+      ],
+      "rules": [
+        "case-reads-require-case"
+      ],
+      "note": "Enqueues or retries work"
+    },
+    {
+      "file": "apps/server/src/modules/clients/route.ts",
+      "symbol": "clientsAdminRoutes",
+      "line": 18,
+      "labels": [
+        "authz"
+      ],
+      "rules": [
+        "admin-client-settings"
+      ],
+      "note": "Checks a role"
+    },
+    {
+      "file": "apps/server/src/modules/clients/route.ts",
+      "symbol": "access",
+      "line": 24,
+      "labels": [
+        "authz"
+      ],
+      "rules": [
+        "admin-client-settings"
+      ],
+      "note": "Checks a role"
+    }
+  ],
+  "flows": [
+    {
+      "entry": "GET /health",
+      "file": "apps/server/src/app.ts",
+      "line": 135,
+      "checks": [
+        "apiAuth",
+        "public on purpose"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/job.service.ts",
+          "symbol": "cleanup",
+          "line": 185,
+          "labels": [
+            "db-write",
+            "db-read"
+          ],
+          "tables": [
+            "jobs"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/api_key.service.ts",
+          "symbol": "findBySecret",
+          "line": 24,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "api_keys"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/membership.service.ts",
+          "symbol": "findByUser",
+          "line": 10,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/job.service.ts",
+          "symbol": "claim",
+          "line": 121,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "due",
+            "jobs"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /jobs/drain",
+      "file": "apps/server/src/internal.ts",
+      "line": 27,
+      "checks": [
+        "runDueJobs"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/job.service.ts",
+          "symbol": "cleanup",
+          "line": 185,
+          "labels": [
+            "db-write",
+            "db-read"
+          ],
+          "tables": [
+            "jobs"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/job.service.ts",
+          "symbol": "claim",
+          "line": 121,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "due",
+            "jobs"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /webhooks/drain",
+      "file": "apps/server/src/internal.ts",
+      "line": 28,
+      "checks": [
+        "runDueJobs"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/job.service.ts",
+          "symbol": "cleanup",
+          "line": 185,
+          "labels": [
+            "db-write",
+            "db-read"
+          ],
+          "tables": [
+            "jobs"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/job.service.ts",
+          "symbol": "claim",
+          "line": 121,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "due",
+            "jobs"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PUT /actions/:name",
+      "file": "apps/server/src/modules/actions/route.ts",
+      "line": 20,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/actions/route.ts",
+          "symbol": "PUT /actions/:name",
+          "line": 20,
+          "labels": [
+            "db-write"
+          ],
+          "inputs": [
+            "c.req.param(",
+            "body"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "findLatest",
+          "line": 23,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "listLatest",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /actions",
+      "file": "apps/server/src/modules/actions/route.ts",
+      "line": 40,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "listLatest",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /actions/:name",
+      "file": "apps/server/src/modules/actions/route.ts",
+      "line": 42,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "findLatest",
+          "line": 23,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /actions/:name/versions",
+      "file": "apps/server/src/modules/actions/route.ts",
+      "line": 54,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "findLatest",
+          "line": 23,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /actions/:name/automatic",
+      "file": "apps/server/src/modules/actions/route.ts",
+      "line": 60,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "findLatest",
+          "line": 23,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /signup",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 196,
+      "checks": [
+        "public on purpose"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/user.service.ts",
+          "symbol": "findByEmail",
+          "line": 75,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/tenancy/repo.ts",
+          "symbol": "adoptOrphans",
+          "line": 61,
+          "labels": [
+            "db-write",
+            "db-read"
+          ],
+          "tables": [
+            "memberships",
+            "workspaces"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workspace.service.ts",
+          "symbol": "createWithSlug",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /login",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 219,
+      "checks": [
+        "public on purpose"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/user.service.ts",
+          "symbol": "signInWithPassword",
+          "line": 105,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /supabase",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 232,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/tenancy/repo.ts",
+          "symbol": "adoptOrphans",
+          "line": 61,
+          "labels": [
+            "db-write",
+            "db-read"
+          ],
+          "tables": [
+            "memberships",
+            "workspaces"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workspace.service.ts",
+          "symbol": "createWithSlug",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /cognito/callback",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 307,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/tenancy/repo.ts",
+          "symbol": "adoptOrphans",
+          "line": 61,
+          "labels": [
+            "db-write",
+            "db-read"
+          ],
+          "tables": [
+            "memberships",
+            "workspaces"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workspace.service.ts",
+          "symbol": "createWithSlug",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /mfa",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 395,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /mfa/setup",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 425,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /mfa/verify",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 447,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /mfa/disable",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 474,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /me",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 500,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PATCH /me",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 505,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/auth/route.ts",
+          "symbol": "PATCH /me",
+          "line": 505,
+          "labels": [
+            "fs-write"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /password",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 514,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/platform/orm.ts",
+          "symbol": "deleteMany",
+          "line": 251,
+          "labels": [
+            "db-write"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /me",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 527,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /invites/:token",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 561,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/user.service.ts",
+          "symbol": "findByEmail",
+          "line": 75,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "email"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /invites/:token/accept",
+      "file": "apps/server/src/modules/auth/route.ts",
+      "line": 572,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/session.service.ts",
+          "symbol": "findUser",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /queues",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 64,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "listLatest",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /queues/test",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 76,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "listLatest",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/console/src/api/client.ts",
+          "symbol": "request",
+          "line": 25,
+          "labels": [
+            "network"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PUT /queues/:id",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 86,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "listLatest",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /queues/:id",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 105,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/platform/orm.ts",
+          "symbol": "count",
+          "line": 171,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /cases/:id/view",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 132,
+      "checks": [
+        "requireCase"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/case.service.ts",
+          "symbol": "listFor",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/entities.service.ts",
+          "symbol": "listByTypes",
+          "line": 16,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/cases/repo.ts",
+          "symbol": "findCaseSummary",
+          "line": 194,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "cases",
+            "users"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /cases/:id/view/preview",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 143,
+      "checks": [
+        "requireCase"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/case.service.ts",
+          "symbol": "listFor",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/entities.service.ts",
+          "symbol": "listByTypes",
+          "line": 16,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/cases/repo.ts",
+          "symbol": "findCaseSummary",
+          "line": 194,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "cases",
+            "users"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /cases/:id/view/preview/lists/:block",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 147,
+      "checks": [
+        "requireCase"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/case.service.ts",
+          "symbol": "listFor",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/entities.service.ts",
+          "symbol": "findByType",
+          "line": 11,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/cases/repo.ts",
+          "symbol": "findCaseSummary",
+          "line": 194,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "cases",
+            "users"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "history",
+          "line": 364,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "events",
+            "found",
+            "objects",
+            "users"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /cases/:id/view/lists/:block",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 160,
+      "checks": [
+        "requireCase"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/case.service.ts",
+          "symbol": "listFor",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/entities.service.ts",
+          "symbol": "findByType",
+          "line": 11,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/cases/repo.ts",
+          "symbol": "findCaseSummary",
+          "line": 194,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "cases",
+            "users"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "history",
+          "line": 364,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "events",
+            "found",
+            "objects",
+            "users"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /cases/:id/view/media/:block/:index",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 172,
+      "checks": [
+        "requireCase"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/case.service.ts",
+          "symbol": "listFor",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/cases/repo.ts",
+          "symbol": "findCaseSummary",
+          "line": 194,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "cases",
+            "users"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /cases/:id/view/viewed",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 186,
+      "checks": [
+        "requireCase"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/cases/repo.ts",
+          "symbol": "findCaseSummary",
+          "line": 194,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "cases",
+            "users"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /cases/:id/checks",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 194,
+      "checks": [
+        "requireCase"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/case.service.ts",
+          "symbol": "listFor",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/ingest/repo.ts",
+          "symbol": "eventsRepository",
+          "line": 43,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "events",
+            "s"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entitiesRepository",
+          "line": 81,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "events",
+            "found"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "analyticsRepository",
+          "line": 7,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "events",
+            "labels"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/cases/repo.ts",
+          "symbol": "findCaseSummary",
+          "line": 194,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "cases",
+            "users"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /cases/:id/timeline",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 208,
+      "checks": [
+        "requireCase"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/case.service.ts",
+          "symbol": "listFor",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/event.service.ts",
+          "symbol": "listInSession",
+          "line": 54,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/cases/repo.ts",
+          "symbol": "findCaseSummary",
+          "line": 194,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "cases",
+            "users"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /queues/:id/cases/bulk",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 252,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/cases/repo.ts",
+          "symbol": "findCaseSummary",
+          "line": 194,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "cases",
+            "users"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /cases/:id/notes",
+      "file": "apps/server/src/modules/cases/route.ts",
+      "line": 266,
+      "checks": [
+        "requireCase"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/cases/repo.ts",
+          "symbol": "findCaseSummary",
+          "line": 194,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "cases",
+            "users"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/ingest/repo.ts",
+          "symbol": "eventsRepository",
+          "line": 43,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "events",
+            "s"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entitiesRepository",
+          "line": 81,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "events",
+            "found"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "analyticsRepository",
+          "line": 7,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "events",
+            "labels"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /objects/:type/:id",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 55,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/object.service.ts",
+          "symbol": "findByEntity",
+          "line": 16,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "entity"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/case.service.ts",
+          "symbol": "listFor",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "caseId"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /labels",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 65,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/decision.service.ts",
+          "symbol": "listAbout",
+          "line": 130,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/webhook_delivery.service.ts",
+          "symbol": "listAbout",
+          "line": 109,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "recordTriggered",
+          "line": 73,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/ingest/repo.ts",
+          "symbol": "eventsRepository",
+          "line": 43,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "events",
+            "s"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entitiesRepository",
+          "line": 81,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "events",
+            "found"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "analyticsRepository",
+          "line": 7,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "events",
+            "labels"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PUT /entity-types/:type",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 90,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/entities.service.ts",
+          "symbol": "findByType",
+          "line": 11,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "type"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /entity-types",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 108,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entityTypes",
+          "line": 240,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "labels",
+            "objects"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /entity-types/:type/shape",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 112,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entityShape",
+          "line": 286,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "events",
+            "labels",
+            "objects"
+          ],
+          "inputs": [
+            "type"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /entity-types/:type",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 116,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/entities.service.ts",
+          "symbol": "findByType",
+          "line": 11,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "type"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PUT /entities/:type/:id",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 123,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /entities/:type/:id",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 146,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "eraseEntity",
+          "line": 536,
+          "labels": [
+            "db-write",
+            "db-read"
+          ],
+          "tables": [
+            "case_evidence",
+            "case_items",
+            "cases",
+            "decisions",
+            "erase_cases",
+            "erase_decisions"
+          ]
+        },
+        {
+          "file": "apps/server/src/platform/orm.ts",
+          "symbol": "count",
+          "line": 171,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /entities",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 157,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entityTypes",
+          "line": 240,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "labels",
+            "objects"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "listEntities",
+          "line": 488,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "found"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entityRows",
+          "line": 82,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "ids",
+            "labels",
+            "objects"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /entities/:type/:id/commands",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 200,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/catalog/libs/commands.ts",
+          "symbol": "listCommands",
+          "line": 139,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "type",
+            "id"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/decision.service.ts",
+          "symbol": "listAbout",
+          "line": 130,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "subject"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/webhook_delivery.service.ts",
+          "symbol": "listAbout",
+          "line": 109,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "subjectRef"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /entities/:type/:id/commands/:key",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 204,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/entities.service.ts",
+          "symbol": "findByType",
+          "line": 11,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/event.service.ts",
+          "symbol": "listStages",
+          "line": 45,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/ingest/repo.ts",
+          "symbol": "eventsRepository",
+          "line": 43,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "events",
+            "s"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entitiesRepository",
+          "line": 81,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "events",
+            "found"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "analyticsRepository",
+          "line": 7,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "events",
+            "labels"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/webhook.service.ts",
+          "symbol": "listEnabledEndpoints",
+          "line": 20,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /entities/:type/:id",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 232,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/object.service.ts",
+          "symbol": "findByEntity",
+          "line": 16,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "entity"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/case.service.ts",
+          "symbol": "listFor",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "caseId"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/decision.service.ts",
+          "symbol": "matching",
+          "line": 147,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "definition_versions"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /entities/:type/:id/media/:property",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 262,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/object.service.ts",
+          "symbol": "findByEntity",
+          "line": 16,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "entity"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/entities.service.ts",
+          "symbol": "findByType",
+          "line": 11,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "type"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/workflows/libs/runner.ts",
+          "symbol": "markFailing",
+          "line": 380,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /entities/:type/:id/facts",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 279,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/entities.service.ts",
+          "symbol": "findByType",
+          "line": 11,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "type"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /entities/:type/:id/lists/:name",
+      "file": "apps/server/src/modules/catalog/route.ts",
+      "line": 287,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/entities.service.ts",
+          "symbol": "findByType",
+          "line": 11,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "type"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "history",
+          "line": 364,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "events",
+            "found",
+            "objects",
+            "users"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PUT /client-settings",
+      "file": "apps/server/src/modules/clients/route.ts",
+      "line": 67,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/clients/route.ts",
+          "symbol": "PUT /client-settings",
+          "line": 67,
+          "labels": [
+            "db-write"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workspaces/:workspace/cloudflare/zones",
+      "file": "apps/server/src/modules/cloudflare/route.ts",
+      "line": 22,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/console/src/api/client.ts",
+          "symbol": "request",
+          "line": 25,
+          "labels": [
+            "network"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workspaces/:workspace/cloudflare/deploy",
+      "file": "apps/server/src/modules/cloudflare/route.ts",
+      "line": 30,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        },
+        {
+          "file": "apps/console/src/api/client.ts",
+          "symbol": "request",
+          "line": 25,
+          "labels": [
+            "network"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /decide",
+      "file": "apps/server/src/modules/decisions/route.ts",
+      "line": 22,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "findLatest",
+          "line": 23,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/job.service.ts",
+          "symbol": "claim",
+          "line": 121,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "due",
+            "jobs"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /events/decide",
+      "file": "apps/server/src/modules/decisions/route.ts",
+      "line": 81,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/ingest/service.ts",
+          "symbol": "decideEvent",
+          "line": 85,
+          "labels": [
+            "db-write"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/decision.service.ts",
+          "symbol": "findByEvent",
+          "line": 75,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "listLatest",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/service.ts",
+          "symbol": "setProperties",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/job.service.ts",
+          "symbol": "claim",
+          "line": 121,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "due",
+            "jobs"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /decisions",
+      "file": "apps/server/src/modules/decisions/route.ts",
+      "line": 105,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/decision.service.ts",
+          "symbol": "countMatching",
+          "line": 117,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "decisions"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/decision.service.ts",
+          "symbol": "matching",
+          "line": 147,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "definition_versions"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /decisions/:id/resolution",
+      "file": "apps/server/src/modules/decisions/route.ts",
+      "line": 143,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/job.service.ts",
+          "symbol": "claim",
+          "line": 121,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "due",
+            "jobs"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workspaces/:workspace/environments",
+      "file": "apps/server/src/modules/environments/route.ts",
+      "line": 28,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workspaces/:workspace/environments/:environment/copy-options",
+      "file": "apps/server/src/modules/environments/route.ts",
+      "line": 33,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/environments/repo.ts",
+          "symbol": "listCopyOptions",
+          "line": 65,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "choices"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/environments/repo.ts",
+          "symbol": "copyFromOptions",
+          "line": 27,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "actions",
+            "all_types",
+            "counts",
+            "dashboards",
+            "decisions",
+            "entities"
+          ]
+        },
+        {
+          "file": "apps/server/src/platform/orm.ts",
+          "symbol": "count",
+          "line": 171,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/environments/repo.ts",
+          "symbol": "copyEntityIds",
+          "line": 19,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "labels",
+            "objects"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workspaces/:workspace/environments",
+      "file": "apps/server/src/modules/environments/route.ts",
+      "line": 41,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PATCH /workspaces/:workspace/environments/:environment",
+      "file": "apps/server/src/modules/environments/route.ts",
+      "line": 55,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /workspaces/:workspace/environments/:environment",
+      "file": "apps/server/src/modules/environments/route.ts",
+      "line": 70,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/platform/orm.ts",
+          "symbol": "deleteMany",
+          "line": 251,
+          "labels": [
+            "db-write"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workflows/:name/experiments",
+      "file": "apps/server/src/modules/experiments/route.ts",
+      "line": 14,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/webhook.service.ts",
+          "symbol": "listEnabledEndpoints",
+          "line": 20,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /experiments",
+      "file": "apps/server/src/modules/experiments/route.ts",
+      "line": 28,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/experiments/service.ts",
+          "symbol": "listExperiments",
+          "line": 75,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workflows/:name/experiments",
+      "file": "apps/server/src/modules/experiments/route.ts",
+      "line": 30,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/experiments/service.ts",
+          "symbol": "listExperiments",
+          "line": 75,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "workflow"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workflow-experiments/:id",
+      "file": "apps/server/src/modules/experiments/route.ts",
+      "line": 34,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/experiments/service.ts",
+          "symbol": "getExperiment",
+          "line": 84,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "row",
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PATCH /workflow-experiments/:id",
+      "file": "apps/server/src/modules/experiments/route.ts",
+      "line": 38,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/experiments/service.ts",
+          "symbol": "getExperiment",
+          "line": 84,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "row",
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workflow-experiments/:id/apply",
+      "file": "apps/server/src/modules/experiments/route.ts",
+      "line": 42,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/experiments/service.ts",
+          "symbol": "getExperiment",
+          "line": 84,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/workflows/service.ts",
+          "symbol": "live",
+          "line": 196,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /events",
+      "file": "apps/server/src/modules/ingest/route.ts",
+      "line": 24,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/ingest/service.ts",
+          "symbol": "ingest",
+          "line": 42,
+          "labels": [
+            "db-write"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/service.ts",
+          "symbol": "setProperties",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "listLatest",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "eventTriggered",
+          "line": 65,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "recordTriggered",
+          "line": 73,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /records/:id",
+      "file": "apps/server/src/modules/ingest/route.ts",
+      "line": 57,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/event.service.ts",
+          "symbol": "listStages",
+          "line": 45,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /sessions/:id",
+      "file": "apps/server/src/modules/ingest/route.ts",
+      "line": 74,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/event.service.ts",
+          "symbol": "listInSession",
+          "line": 54,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/decision.service.ts",
+          "symbol": "matching",
+          "line": 147,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "definition_versions"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET ${base}/summary",
+      "file": "apps/server/src/modules/jobs/route.ts",
+      "line": 33,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/jobs/repo.ts",
+          "symbol": "countJobs",
+          "line": 24,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "jobs"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET ${base}/:job",
+      "file": "apps/server/src/modules/jobs/route.ts",
+      "line": 35,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST ${base}/:job/retry",
+      "file": "apps/server/src/modules/jobs/route.ts",
+      "line": 37,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/jobs/repo.ts",
+          "symbol": "retryDeadJob",
+          "line": 36,
+          "labels": [
+            "db-write"
+          ],
+          "tables": [
+            "jobs"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/jobs/repo.ts",
+          "symbol": "findJob",
+          "line": 31,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "jobs"
+          ],
+          "inputs": [
+            "id"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /lists/:list",
+      "file": "apps/server/src/modules/lists/route.ts",
+      "line": 26,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "ref"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "ref"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /lists/:list/readers",
+      "file": "apps/server/src/modules/lists/route.ts",
+      "line": 28,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "ref"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "ref"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "listLive",
+          "line": 79,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "listAll",
+          "line": 55,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /lists/:list",
+      "file": "apps/server/src/modules/lists/route.ts",
+      "line": 58,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "ref"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "ref"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "listLive",
+          "line": 79,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "listAll",
+          "line": 55,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /",
+      "file": "apps/server/src/modules/mcp/route.ts",
+      "line": 28,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /",
+      "file": "apps/server/src/modules/mcp/route.ts",
+      "line": 57,
+      "checks": [
+        "requireSession",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workspaces/:workspace/mcp",
+      "file": "apps/server/src/modules/mcp/route.ts",
+      "line": 72,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PUT /workspaces/:workspace/mcp",
+      "file": "apps/server/src/modules/mcp/route.ts",
+      "line": 74,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /models/:slug",
+      "file": "apps/server/src/modules/models/route.ts",
+      "line": 38,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/model.service.ts",
+          "symbol": "findBySlug",
+          "line": 40,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "slug"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /models/:slug/versions",
+      "file": "apps/server/src/modules/models/route.ts",
+      "line": 40,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/model.service.ts",
+          "symbol": "findBySlug",
+          "line": 40,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /models/:slug/versions/:version",
+      "file": "apps/server/src/modules/models/route.ts",
+      "line": 55,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findVersion",
+          "line": 99,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "name"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /models/:slug/versions/:version/file",
+      "file": "apps/server/src/modules/models/route.ts",
+      "line": 59,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/model_artifact.service.ts",
+          "symbol": "findFile",
+          "line": 9,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "sha256"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findVersion",
+          "line": 99,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "name"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /models/:slug/versions/:version/score",
+      "file": "apps/server/src/modules/models/route.ts",
+      "line": 69,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/model.service.ts",
+          "symbol": "findBySlug",
+          "line": 40,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/model_artifact.service.ts",
+          "symbol": "findFile",
+          "line": 9,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/console/src/api/client.ts",
+          "symbol": "request",
+          "line": 25,
+          "labels": [
+            "network"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findVersion",
+          "line": 99,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /models/:slug/versions/:version/promote",
+      "file": "apps/server/src/modules/models/route.ts",
+      "line": 75,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/model.service.ts",
+          "symbol": "findBySlug",
+          "line": 40,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/model_artifact.service.ts",
+          "symbol": "findFile",
+          "line": 9,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/model_artifact.service.ts",
+          "symbol": "findSamples",
+          "line": 14,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findVersion",
+          "line": 99,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PATCH /models/:slug",
+      "file": "apps/server/src/modules/models/route.ts",
+      "line": 94,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/model.service.ts",
+          "symbol": "findBySlug",
+          "line": 40,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "slug"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /models/:slug/archive",
+      "file": "apps/server/src/modules/models/route.ts",
+      "line": 105,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/model.service.ts",
+          "symbol": "findBySlug",
+          "line": 40,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "slug"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "listAll",
+          "line": 55,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /stats",
+      "file": "apps/server/src/modules/observe/route.ts",
+      "line": 28,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "stats",
+          "line": 8,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "actions",
+            "decisions",
+            "events"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /usage",
+      "file": "apps/server/src/modules/observe/route.ts",
+      "line": 30,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "usage",
+          "line": 33,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "events",
+            "labels",
+            "objects"
+          ],
+          "inputs": [
+            "since"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "stats",
+          "line": 8,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "actions",
+            "decisions",
+            "events"
+          ]
+        },
+        {
+          "file": "apps/console/src/api/client.ts",
+          "symbol": "request",
+          "line": 25,
+          "labels": [
+            "network"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /overview",
+      "file": "apps/server/src/modules/observe/route.ts",
+      "line": 40,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "stats",
+          "line": 8,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "actions",
+            "decisions",
+            "events"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entityTypes",
+          "line": 240,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "labels",
+            "objects"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/decision.service.ts",
+          "symbol": "matching",
+          "line": 147,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "definition_versions"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /metrics/query",
+      "file": "apps/server/src/modules/observe/route.ts",
+      "line": 44,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/label.service.ts",
+          "symbol": "indexByEntity",
+          "line": 50,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /metrics/options",
+      "file": "apps/server/src/modules/observe/route.ts",
+      "line": 92,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "listLatest",
+          "line": 28,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "metricOptions",
+          "line": 142,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "events",
+            "labels"
+          ],
+          "inputs": [
+            "eventType"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /rulesets/test",
+      "file": "apps/server/src/modules/rulesets/route.ts",
+      "line": 43,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "bySlugs",
+          "line": 63,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /rulesets/:ruleset/versions",
+      "file": "apps/server/src/modules/rulesets/route.ts",
+      "line": 53,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "ref"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "ref"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /rulesets/:ruleset/publish",
+      "file": "apps/server/src/modules/rulesets/route.ts",
+      "line": 70,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "bySlugs",
+          "line": 63,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PATCH /rulesets/:ruleset",
+      "file": "apps/server/src/modules/rulesets/route.ts",
+      "line": 76,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /rulesets/:ruleset/${path}",
+      "file": "apps/server/src/modules/rulesets/route.ts",
+      "line": 87,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/workflows/service.ts",
+          "symbol": "setArchived",
+          "line": 312,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "decisionWorkflowOf",
+          "line": 84,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /rulesets/:ruleset/evaluate",
+      "file": "apps/server/src/modules/rulesets/route.ts",
+      "line": 93,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "bySlugs",
+          "line": 63,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workspaces",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 34,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workspace.service.ts",
+          "symbol": "createWithSlug",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PATCH /workspaces/:workspace",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 48,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/tenancy/service.ts",
+          "symbol": "renameWorkspace",
+          "line": 103,
+          "labels": [
+            "fs-write"
+          ],
+          "inputs": [
+            "workspaceId"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workspaces/:workspace/data-retention",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 63,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PUT /workspaces/:workspace/data-retention",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 68,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workspaces/:workspace/media-hosts",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 75,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PUT /workspaces/:workspace/media-hosts",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 80,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /workspaces/:workspace",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 93,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workspaces/:workspace/members",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 101,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/membership.service.ts",
+          "symbol": "listWithUsers",
+          "line": 21,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/invite.service.ts",
+          "symbol": "listOpen",
+          "line": 42,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PATCH /workspaces/:workspace/members/:user",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 106,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/tenancy/service.ts",
+          "symbol": "roleOf",
+          "line": 63,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "workspaceId",
+            "userId"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/membership.service.ts",
+          "symbol": "listWithUsers",
+          "line": 21,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/invite.service.ts",
+          "symbol": "listOpen",
+          "line": 42,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/platform/orm.ts",
+          "symbol": "count",
+          "line": 171,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /workspaces/:workspace/members/:user",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 120,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/tenancy/service.ts",
+          "symbol": "roleOf",
+          "line": 63,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "workspaceId",
+            "userId"
+          ]
+        },
+        {
+          "file": "apps/server/src/platform/orm.ts",
+          "symbol": "deleteMany",
+          "line": 251,
+          "labels": [
+            "db-write"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        },
+        {
+          "file": "apps/server/src/platform/orm.ts",
+          "symbol": "count",
+          "line": 171,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workspaces/:workspace/invites",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 131,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/user.service.ts",
+          "symbol": "findByEmail",
+          "line": 75,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/tenancy/service.ts",
+          "symbol": "roleOf",
+          "line": 63,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "workspaceId"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/ingest/repo.ts",
+          "symbol": "eventsRepository",
+          "line": 43,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "events",
+            "s"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entitiesRepository",
+          "line": 81,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "events",
+            "found"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "analyticsRepository",
+          "line": 7,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "events",
+            "labels"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /workspaces/:workspace/invites/:invite",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 151,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workspaces/:workspace/keys",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 162,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workspaces/:workspace/keys",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 167,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PATCH /workspaces/:workspace/keys/:key",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 185,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /workspaces/:workspace/keys/:key",
+      "file": "apps/server/src/modules/tenancy/route.ts",
+      "line": 210,
+      "checks": [
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workspaces/:workspace/webhook-deliveries",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 54,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/decision.service.ts",
+          "symbol": "listAbout",
+          "line": 130,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "subject"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/webhook_delivery.service.ts",
+          "symbol": "listAbout",
+          "line": 109,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "subjectRef"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET ${base}/:webhook",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 72,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PATCH ${base}/:webhook",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 77,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE ${base}/:webhook",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 94,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST ${base}/:webhook/token",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 102,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST ${base}/:webhook/replay",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 109,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/webhook_delivery.service.ts",
+          "symbol": "listReplayable",
+          "line": 168,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/ingest/service.ts",
+          "symbol": "ingest",
+          "line": 42,
+          "labels": [
+            "db-write"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST ${base}/preview",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 120,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST ${base}/:webhook/rotate",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 127,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST ${base}/:webhook/test",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 136,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET ${base}/:webhook/deliveries",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 143,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET ${base}/:webhook/deliveries/:delivery",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 157,
+      "checks": [
+        "requireAdmin",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/webhook_delivery.service.ts",
+          "symbol": "findInWebhook",
+          "line": 118,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "webhookId",
+            "id"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST ${base}/:webhook/resend",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 161,
+      "checks": [
+        "requireAdmin",
+        "receive",
+        "requireRole"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/webhook.service.ts",
+          "symbol": "findSourceByToken",
+          "line": 12,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "webhooks"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/environment.service.ts",
+          "symbol": "findByIdOrProduction",
+          "line": 15,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/ingest/service.ts",
+          "symbol": "ingest",
+          "line": 42,
+          "labels": [
+            "db-write"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /webhooks/:token",
+      "file": "apps/server/src/modules/webhooks/route.ts",
+      "line": 190,
+      "checks": [
+        "receive"
+      ],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/webhook.service.ts",
+          "symbol": "findSourceByToken",
+          "line": 12,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "webhooks"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/ingest/service.ts",
+          "symbol": "ingest",
+          "line": 42,
+          "labels": [
+            "db-write"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PUT /workflows/:name",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 79,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/workflows/service.ts",
+          "symbol": "live",
+          "line": 196,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "decisionWorkflowOf",
+          "line": 84,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workflows",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 94,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "listAll",
+          "line": 55,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "archived"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workflows/:name/publish",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 127,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/workflows/service.ts",
+          "symbol": "live",
+          "line": 196,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/ingest/repo.ts",
+          "symbol": "eventsRepository",
+          "line": 43,
+          "labels": [
+            "money",
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "event_entities",
+            "events",
+            "s"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/catalog/repo.ts",
+          "symbol": "entitiesRepository",
+          "line": 81,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "event_entities",
+            "events",
+            "found"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/observe/repo.ts",
+          "symbol": "analyticsRepository",
+          "line": 7,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "decisions",
+            "events",
+            "labels"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "PATCH /workflows/:name",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 137,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/workflows/service.ts",
+          "symbol": "live",
+          "line": 196,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workflows/:name/hook",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 146,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workflows/:name/archive",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 154,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/workflows/service.ts",
+          "symbol": "setArchived",
+          "line": 312,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "decisionWorkflowOf",
+          "line": 84,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workflows/:name/restore",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 163,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/workflows/service.ts",
+          "symbol": "setArchived",
+          "line": 312,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "decisionWorkflowOf",
+          "line": 84,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workflows/:name",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 172,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workflows/:name/versions",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 184,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/list.service.ts",
+          "symbol": "findRow",
+          "line": 48,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/ruleset.service.ts",
+          "symbol": "findRow",
+          "line": 53,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "DELETE /workflows/:name",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 190,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/platform/orm.ts",
+          "symbol": "deleteMany",
+          "line": 251,
+          "labels": [
+            "db-write"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workflows/:name/training-data",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 197,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/action.service.ts",
+          "symbol": "findLatest",
+          "line": 23,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "listFinished",
+          "line": 132,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/label.service.ts",
+          "symbol": "timesFor",
+          "line": 38,
+          "labels": [
+            "db-read"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workflows/test",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 216,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workflows/:name/runs",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 260,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET /workflows/:name/runs",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 317,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/modules/workflows/route.ts",
+          "symbol": "GET /workflows/:name/runs",
+          "line": 317,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "workflow",
+            "limit"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "findByName",
+          "line": 49,
+          "labels": [
+            "db-read"
+          ],
+          "inputs": [
+            "r",
+            "name"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "POST /workflow-runs/:id/cancel",
+      "file": "apps/server/src/modules/workflows/route.ts",
+      "line": 334,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/server/src/platform/orm.ts",
+          "symbol": "deleteMany",
+          "line": 251,
+          "labels": [
+            "db-write"
+          ]
+        },
+        {
+          "file": "apps/server/src/services/workflow.service.ts",
+          "symbol": "countOpen",
+          "line": 151,
+          "labels": [
+            "db-read"
+          ]
+        },
+        {
+          "file": "apps/server/src/modules/workflows/repo.ts",
+          "symbol": "takeNextQueued",
+          "line": 36,
+          "labels": [
+            "db-read"
+          ],
+          "tables": [
+            "workflow_runs"
+          ]
+        }
+      ]
+    },
+    {
+      "entry": "GET ${method.toUpperCase()} ${route}",
+      "file": "packages/sdk/src/middleware.ts",
+      "line": 176,
+      "checks": [],
+      "reaches": [
+        {
+          "file": "apps/console/src/api/client.ts",
+          "symbol": "request",
+          "line": 25,
+          "labels": [
+            "network"
+          ]
+        }
+      ]
+    }
+  ]
+}
